@@ -59,8 +59,8 @@ public class CacheClient {
         RedisData redisData = new RedisData();
         redisData.setData(value);
         redisData.setExpireTime(LocalDateTime.now().plusSeconds(unit.toSeconds(time)));
-        //存入 redis
-        set(key, redisData, time, unit);
+        //存入 redis，设置为永久有效
+        redisTemplate.opsForValue().set(key, JSON.toJSONString(redisData));
     }
 
     /**
@@ -78,7 +78,7 @@ public class CacheClient {
             //Redis 中存在值，直接返回即可
             return JSON.parseObject(json, type);
         } else if (StringUtils.equals("", json)) {
-            //缓存的是控制，直接返回 null
+            //缓存的是空置，直接返回 null
             return null;
         }
 
@@ -88,11 +88,11 @@ public class CacheClient {
             //数据库不存在，缓存空值
             this.set(key, "", time, unit);
             return null;
+        } else {
+            //数据库存在，缓存到 Redis
+            this.set(key, r, time, unit);
+            return r;
         }
-
-        //数据库真实存在值，写入 Redis
-        this.set(key, r, time, unit);
-        return r;
     }
 
     /**
