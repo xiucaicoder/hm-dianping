@@ -1,22 +1,21 @@
 package com.hmdp.service.impl;
 
+import cn.hutool.core.date.StopWatch;
+import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.hmdp.dto.Result;
 import com.hmdp.entity.SeckillVoucher;
 import com.hmdp.entity.VoucherOrder;
 import com.hmdp.mapper.VoucherOrderMapper;
 import com.hmdp.service.ISeckillVoucherService;
 import com.hmdp.service.IVoucherOrderService;
-import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.hmdp.utils.RedisIdWorker;
 import com.hmdp.utils.RedissonDistributedLocker;
 import com.hmdp.utils.UserHolder;
-import org.redisson.api.RLock;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 
 import javax.annotation.Resource;
 import java.time.LocalDateTime;
-import java.util.concurrent.TimeUnit;
 
 import static com.hmdp.constant.CommonConstant.LOCK_WAIT_TIME;
 import static com.hmdp.constant.CommonConstant.MAX_LEASE_TIME;
@@ -57,7 +56,7 @@ public class VoucherOrderServiceImpl
 
             //查询优惠券
             SeckillVoucher voucher = seckillVoucherService.getById(voucherId);
-            if (!isOnePersonOneOrder(voucherId)) {
+            if (!isOnePersonOneOrderByRedis(voucherId)) {
                 //不是一人一单
                 return Result.fail("活动火爆，请刷新重试！");
             }
@@ -122,7 +121,7 @@ public class VoucherOrderServiceImpl
      *
      * @return true:是 false:否
      */
-    private boolean isOnePersonOneOrder(Long voucherId) {
+    private boolean isOnePersonOneOrderByDb(Long voucherId) {
         Long userId = UserHolder.getUser().getId();
         String userVoucherLockKey = "user_voucher_lock:" + userId + ":" + voucherId;
 
@@ -142,4 +141,24 @@ public class VoucherOrderServiceImpl
             locker.unlock(userVoucherLockKey); // 解锁
         }
     }
+
+    /**
+     * 通过 redis 的 bitmap 高效判断是否是一人一单
+     */
+    private boolean isOnePersonOneOrderByRedis(Long voucherId) {
+        Long userId = UserHolder.getUser().getId();
+        String userVoucherKey = "user_voucher:" + voucherId;
+
+        //获取该用户在Bitmaps中的状态
+        Boolean isOrder = stringRedisTemplate.opsForValue().getBit(userVoucherKey, userId);
+        if (isOrder == null || !isOrder) {
+            //如果该用户没有购买过该商品，那么在Bitmaps中设置该用户的状态为已购买
+            stringRedisTemplate.opsForValue().setBit(userVoucherKey, userId, true);
+            return true;
+        } else {
+            //如果该用户已经购买过该商品，那么返回false
+            return false;
+        }
+    }
+
 }
