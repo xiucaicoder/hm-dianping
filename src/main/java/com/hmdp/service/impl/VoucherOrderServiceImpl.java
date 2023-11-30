@@ -1,6 +1,5 @@
 package com.hmdp.service.impl;
 
-import cn.hutool.core.date.StopWatch;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.hmdp.dto.Result;
 import com.hmdp.entity.SeckillVoucher;
@@ -56,7 +55,7 @@ public class VoucherOrderServiceImpl
 
             //查询优惠券
             SeckillVoucher voucher = seckillVoucherService.getById(voucherId);
-            if (!isOnePersonOneOrderByRedis(voucherId)) {
+            if (!isOnePersonOneOrderByDb(voucherId)) {
                 //不是一人一单
                 return Result.fail("活动火爆，请刷新重试！");
             }
@@ -66,11 +65,13 @@ public class VoucherOrderServiceImpl
                 //尚未开始
                 return Result.fail("秒杀尚未开始！");
             }
+
             //判断秒杀是否已经结束
             if (isSeckillEnded(voucher)) {
                 //已经结束
                 return Result.fail("秒杀已经结束！");
             }
+
             //判断库存是否充足并扣减库存
             if (!deductStock(voucherId)) {
                 // 库存不足
