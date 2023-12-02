@@ -20,7 +20,7 @@ spring:
         time-between-eviction-runs: 10s
   rabbitmq:
     host: 127.0.0.1
-    port: 15672
+    port: 5672
     username: guest
     password: guest
   jackson:
@@ -29,4 +29,4 @@ mybatis-plus:
   type-aliases-package: com.hmdp.entity # 别名扫描包
 logging:
   level:
-    com.hmdp: WARN
+    com.hmdp: warn

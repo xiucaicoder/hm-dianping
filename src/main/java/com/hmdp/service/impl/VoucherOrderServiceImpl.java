@@ -1,7 +1,11 @@
 package com.hmdp.service.impl;
 
+import com.alibaba.fastjson.JSON;
+import com.baomidou.mybatisplus.core.toolkit.StringUtils;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
+import com.google.common.collect.Maps;
 import com.hmdp.dto.Result;
+import com.hmdp.dto.UserDTO;
 import com.hmdp.entity.SeckillVoucher;
 import com.hmdp.entity.VoucherOrder;
 import com.hmdp.mapper.VoucherOrderMapper;
@@ -10,14 +14,19 @@ import com.hmdp.service.IVoucherOrderService;
 import com.hmdp.utils.RedisIdWorker;
 import com.hmdp.utils.RedissonDistributedLocker;
 import com.hmdp.utils.UserHolder;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 
 import javax.annotation.Resource;
 import java.time.LocalDateTime;
+import java.util.Map;
 
 import static com.hmdp.constant.CommonConstant.LOCK_WAIT_TIME;
 import static com.hmdp.constant.CommonConstant.MAX_LEASE_TIME;
+import static com.hmdp.constant.RedisKeyConstant.SEC_KILL_KEY;
+import static com.hmdp.constant.RedisKeyConstant.VOUCHER_KEY;
 
 /**
  * <p>
@@ -27,6 +36,7 @@ import static com.hmdp.constant.CommonConstant.MAX_LEASE_TIME;
  * @author 虎哥
  * @since 2021-12-22
  */
+@Slf4j
 @Service
 public class VoucherOrderServiceImpl
         extends ServiceImpl<VoucherOrderMapper, VoucherOrder>
@@ -40,11 +50,14 @@ public class VoucherOrderServiceImpl
     private StringRedisTemplate stringRedisTemplate;
     @Resource
     private RedissonDistributedLocker locker;
+    @Resource
+    private RabbitTemplate rabbitTemplate;
 
     @Override
     public Result seckillVoucher(Long voucherId) {
-        String lockKey = "lock:seckill:" + voucherId;
-        Long orderId;
+        UserDTO user = UserHolder.getUser();
+        Long userId = user.getId();
+        String lockKey = String.format(SEC_KILL_KEY, voucherId);
 
         try {
             boolean getLock = locker.tryLock(lockKey, LOCK_WAIT_TIME, MAX_LEASE_TIME);
@@ -53,9 +66,10 @@ public class VoucherOrderServiceImpl
                 return Result.fail("活动火爆，请刷新重试！");
             }
 
-            //查询优惠券
-            SeckillVoucher voucher = seckillVoucherService.getById(voucherId);
-            if (!isOnePersonOneOrderByDb(voucherId)) {
+            //获取优惠券
+            SeckillVoucher voucher = getVoucher(voucherId);
+
+            if (!isOnePersonOneOrderByRedis(voucherId)) {
                 //不是一人一单
                 return Result.fail("活动火爆，请刷新重试！");
             }
@@ -72,19 +86,86 @@ public class VoucherOrderServiceImpl
                 return Result.fail("秒杀已经结束！");
             }
 
-            //判断库存是否充足并扣减库存
-            if (!deductStock(voucherId)) {
-                // 库存不足
+            //判断库存是否充足
+            if (!isStockEnough(voucher)) {
+                //库存不足
                 return Result.fail("库存不足！");
             }
 
-            //创建订单
-            orderId = createOrder(voucherId);
+            //判断 Redis 库存是否扣减成功
+            if (!deductRedisStock(voucherId)) {
+                return Result.fail("库存不足！");
+            }
+
+            long orderId = redisIdWorker.nextId("order");
+            //发送秒杀消息
+            this.sendSeckillMessage(userId, voucherId, orderId);
+
+            return Result.ok(orderId);
         } finally {
             locker.unlock(lockKey);
         }
+    }
 
-        return Result.ok(orderId);
+    /**
+     * 扣减 Redis 库存
+     */
+    private boolean deductRedisStock(Long voucherId) {
+        String voucherKey = String.format(VOUCHER_KEY, voucherId);
+        String voucherJson = stringRedisTemplate.opsForValue().get(voucherKey);
+
+        if (StringUtils.isBlank(voucherJson)) {
+            log.error("扣减库存失败，优惠券id：{}", voucherId);
+            return false;
+        }
+
+        SeckillVoucher seckillVoucher = JSON.parseObject(voucherJson, SeckillVoucher.class);
+        if (seckillVoucher.getStock() <= 0) {
+            log.error("扣减库存失败，优惠券id：{}", voucherId);
+            return false;
+        }
+
+        seckillVoucher.setStock(seckillVoucher.getStock() - 1);
+        stringRedisTemplate.opsForValue().set(voucherKey, JSON.toJSONString(seckillVoucher));
+
+        return true;
+    }
+
+    /**
+     * 获取优惠券
+     */
+    private SeckillVoucher getVoucher(Long voucherId) {
+        String voucherKey = String.format(VOUCHER_KEY, voucherId);
+        String voucherJson = stringRedisTemplate.opsForValue().get(voucherKey);
+
+        if (StringUtils.isNotBlank(voucherJson)) {
+            return JSON.parseObject(voucherJson, SeckillVoucher.class);
+        } else {
+            SeckillVoucher voucher = seckillVoucherService.getById(voucherId);
+            if (voucher != null) {
+                //30 分钟过期
+                stringRedisTemplate.opsForValue().set(voucherKey, JSON.toJSONString(voucher), 30 * 60);
+            }
+            return voucher;
+        }
+    }
+
+    /**
+     * 发送秒杀消息
+     */
+    private void sendSeckillMessage(Long userId, Long voucherId, Long orderId) {
+        if (userId == null || voucherId == null || orderId == null) {
+            return;
+        }
+
+        Map<String, String> message = Maps.newHashMap();
+        message.put("userId", String.valueOf(userId));
+        message.put("voucherId", String.valueOf(voucherId));
+        message.put("orderId", String.valueOf(orderId));
+
+        log.warn("发送秒杀消息：{}", message);
+
+        rabbitTemplate.convertAndSend("seckillQueue", message);
     }
 
     private boolean isSeckillStarted(SeckillVoucher voucher) {
@@ -95,26 +176,8 @@ public class VoucherOrderServiceImpl
         return voucher.getEndTime().isBefore(LocalDateTime.now());
     }
 
-    private boolean deductStock(Long voucherId) {
-        return seckillVoucherService.update()
-                .setSql("stock= stock -1")
-                .eq("voucher_id", voucherId)
-                .update();
-    }
-
-    private Long createOrder(Long voucherId) {
-        VoucherOrder voucherOrder = new VoucherOrder();
-        //订单id
-        long orderId = redisIdWorker.nextId("order");
-        voucherOrder.setId(orderId);
-        //用户id
-        Long userId = UserHolder.getUser().getId();
-        voucherOrder.setUserId(userId);
-        //代金券id
-        voucherOrder.setVoucherId(voucherId);
-        super.save(voucherOrder);
-
-        return orderId;
+    private boolean isStockEnough(SeckillVoucher voucher) {
+        return voucher.getStock() > 0;
     }
 
     /**
