@@ -208,6 +208,9 @@ public class VoucherOrderServiceImpl
 
     /**
      * 通过 redis 的 bitmap 高效判断是否是一人一单
+     * <p>
+     * 当 userId 比较长的时候，bitmap 的效率会降低。因此 userId 长的时候，不推荐使用此方法。
+     * userId 长的时候，可以使用 Set 来代替。参见 {@link #isOnePersonOneOrderBySet(Long)}
      */
     private boolean isOnePersonOneOrderByBitmap(Long voucherId) {
         Long userId = UserHolder.getUser().getId();
