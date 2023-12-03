@@ -69,7 +69,7 @@ public class VoucherOrderServiceImpl
             //获取优惠券
             SeckillVoucher voucher = getVoucher(voucherId);
 
-            if (!isOnePersonOneOrderByRedis(voucherId)) {
+            if (!isOnePersonOneOrderByBitmap(voucherId)) {
                 //不是一人一单
                 return Result.fail("活动火爆，请刷新重试！");
             }
@@ -209,7 +209,7 @@ public class VoucherOrderServiceImpl
     /**
      * 通过 redis 的 bitmap 高效判断是否是一人一单
      */
-    private boolean isOnePersonOneOrderByRedis(Long voucherId) {
+    private boolean isOnePersonOneOrderByBitmap(Long voucherId) {
         Long userId = UserHolder.getUser().getId();
         String userVoucherKey = "user_voucher:" + voucherId;
 
@@ -224,5 +224,25 @@ public class VoucherOrderServiceImpl
             return false;
         }
     }
+
+    /**
+     * 通过 redis 的 Set 高效判断是否是一人一单
+     */
+    private boolean isOnePersonOneOrderBySet(Long voucherId) {
+        Long userId = UserHolder.getUser().getId();
+        String userVoucherKey = "user_voucher:" + voucherId;
+
+        //获取该用户在Set中的状态
+        Boolean isMember = stringRedisTemplate.opsForSet().isMember(userVoucherKey, userId.toString());
+        if (isMember == null || !isMember) {
+            //如果该用户没有购买过该商品，那么在Set中添加该用户的ID
+            stringRedisTemplate.opsForSet().add(userVoucherKey, userId.toString());
+            return true;
+        } else {
+            //如果该用户已经购买过该商品，那么返回false
+            return false;
+        }
+    }
+
 
 }
