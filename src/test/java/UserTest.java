@@ -40,7 +40,7 @@ public class UserTest {
 
             //模拟用户登录
             UserDTO userDTO = new UserDTO();
-            Long userId = getRandomUserId(6);
+            Long userId = getRandomUserId(18);
             userDTO.setId(userId);
             userDTO.setNickName("测试用户 " + userId);
             userDTO.setIcon("https://www.baidu.com");
