@@ -69,7 +69,7 @@ public class VoucherOrderServiceImpl
             //获取优惠券
             SeckillVoucher voucher = getVoucher(voucherId);
 
-            if (!isOnePersonOneOrderByBitmap(voucherId)) {
+            if (!isOnePersonOneOrderBySet(voucherId)) {
                 //不是一人一单
                 return Result.fail("活动火爆，请刷新重试！");
             }
@@ -246,6 +246,5 @@ public class VoucherOrderServiceImpl
             return false;
         }
     }
-
 
 }
