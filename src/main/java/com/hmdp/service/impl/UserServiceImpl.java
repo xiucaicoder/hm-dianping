@@ -5,6 +5,7 @@ import cn.hutool.core.bean.copier.CopyOptions;
 import cn.hutool.core.lang.UUID;
 import cn.hutool.core.util.RandomUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.toolkit.StringUtils;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.hmdp.dto.LoginFormDTO;
 import com.hmdp.dto.Result;
@@ -17,10 +18,12 @@ import com.hmdp.utils.UserHolder;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.connection.BitFieldSubCommands;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.ValueOperations;
 import org.springframework.stereotype.Service;
 
 import javax.annotation.Resource;
 import javax.servlet.http.HttpSession;
+import java.math.BigInteger;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.HashMap;
@@ -116,11 +119,11 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
         LocalDateTime now = LocalDateTime.now();
         //拼接key
         String yyyyMM = now.format(DateTimeFormatter.ofPattern("yyyy:MM:"));
-        String key = USER_SIGN_KEY +yyyyMM+ id;
+        String key = USER_SIGN_KEY + yyyyMM + id;
         //获取今天是本月的第几天
         int dayOfMonth = now.getDayOfMonth();
         //写了redis
-        stringRedisTemplate.opsForValue().setBit(key,dayOfMonth-1,true);
+        stringRedisTemplate.opsForValue().setBit(key, dayOfMonth - 1, true);
         return Result.ok();
     }
 
@@ -132,7 +135,37 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
         LocalDateTime now = LocalDateTime.now();
         //拼接key
         String yyyyMM = now.format(DateTimeFormatter.ofPattern("yyyy:MM:"));
-        String key = USER_SIGN_KEY +yyyyMM+ id;
+        String key = USER_SIGN_KEY + yyyyMM + id;
+        //获取今天是本月的第几天
+        int dayOfMonth = now.getDayOfMonth();
+
+        //转二进制字符串
+        String binaryString = getBitsBefore(key, dayOfMonth);
+
+        //计算连续签到天数
+        int count = 0;
+        for (int i = binaryString.length() - 1; i >= 0; i--) {
+            if (binaryString.charAt(i) == '1') {
+                count++;
+            } else {
+                break;
+            }
+        }
+        //返回
+        return Result.ok(count);
+    }
+
+    /**
+     * 老师通过复杂一点方法实现的签到天数统计
+     */
+    public Result signCountCopy() {
+        //获取当前登陆用户
+        Long id = UserHolder.getUser().getId();
+        //获取日期
+        LocalDateTime now = LocalDateTime.now();
+        //拼接key
+        String yyyyMM = now.format(DateTimeFormatter.ofPattern("yyyy:MM:"));
+        String key = USER_SIGN_KEY + yyyyMM + id;
         //获取今天是本月的第几天
         int dayOfMonth = now.getDayOfMonth();
         //获取截至本月今天的所有签到记录
@@ -143,27 +176,46 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
                                 .unsigned(dayOfMonth))
                         .valueAt(0)
         );
-        if (result==null||result.isEmpty()){
+        if (result == null || result.isEmpty()) {
             return Result.ok(0);
         }
         Long num = result.get(0);
-        if (num==null||num==0){
+        if (num == null || num == 0) {
             return Result.ok(0);
         }
         //转二进制字符串
         String binaryString = Long.toBinaryString(num);
         //计算连续签到天数
-        int count=0;
-        for (int i = binaryString.length()-1; i >=0; i--) {
-            if (binaryString.charAt(i)=='1'){
+        int count = 0;
+        for (int i = binaryString.length() - 1; i >= 0; i--) {
+            if (binaryString.charAt(i) == '1') {
                 count++;
-            }
-            else {
+            } else {
                 break;
             }
         }
         //返回
         return Result.ok(count);
+    }
+
+    /**
+     * 获取指定 key 的二进制字符串
+     */
+    public String getBitsBefore(String key, int index) {
+        ValueOperations<String, String> ops = this.stringRedisTemplate.opsForValue();
+        String value = ops.get(key);
+        if (StringUtils.isBlank(value)) {
+            return "";
+        }
+
+        //字符串转二进制字符串
+        String binaryString = new BigInteger(value.getBytes()).toString(2);
+
+        if(index > 0 && index < binaryString.length()) {
+            return binaryString.substring(0, index);
+        } else {
+            return binaryString;
+        }
     }
 
     private User createUserWithPhone(String phone) {
