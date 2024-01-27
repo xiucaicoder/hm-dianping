@@ -181,6 +181,25 @@ public class VoucherOrderServiceImpl
     }
 
     /**
+     * 通过 redis 的 Set 高效判断是否是一人一单
+     */
+    private boolean isOnePersonOneOrderBySet(Long voucherId) {
+        Long userId = UserHolder.getUser().getId();
+        String userVoucherKey = "user_voucher:" + voucherId;
+
+        //获取该用户在Set中的状态
+        Boolean isMember = stringRedisTemplate.opsForSet().isMember(userVoucherKey, userId.toString());
+        if (isMember == null || !isMember) {
+            //如果该用户没有购买过该商品，那么在Set中添加该用户的ID
+            stringRedisTemplate.opsForSet().add(userVoucherKey, userId.toString());
+            return true;
+        } else {
+            //如果该用户已经购买过该商品，那么返回false
+            return false;
+        }
+    }
+
+    /**
      * 判断是否是一人一单
      *
      * @return true:是 false:否
@@ -221,25 +240,6 @@ public class VoucherOrderServiceImpl
         if (isOrder == null || !isOrder) {
             //如果该用户没有购买过该商品，那么在Bitmaps中设置该用户的状态为已购买
             stringRedisTemplate.opsForValue().setBit(userVoucherKey, userId, true);
-            return true;
-        } else {
-            //如果该用户已经购买过该商品，那么返回false
-            return false;
-        }
-    }
-
-    /**
-     * 通过 redis 的 Set 高效判断是否是一人一单
-     */
-    private boolean isOnePersonOneOrderBySet(Long voucherId) {
-        Long userId = UserHolder.getUser().getId();
-        String userVoucherKey = "user_voucher:" + voucherId;
-
-        //获取该用户在Set中的状态
-        Boolean isMember = stringRedisTemplate.opsForSet().isMember(userVoucherKey, userId.toString());
-        if (isMember == null || !isMember) {
-            //如果该用户没有购买过该商品，那么在Set中添加该用户的ID
-            stringRedisTemplate.opsForSet().add(userVoucherKey, userId.toString());
             return true;
         } else {
             //如果该用户已经购买过该商品，那么返回false
